@@ -1,116 +1,193 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# Q-Quest 量子神託（QUBO / STAGE×QUOTES） + 「縁の球体（3Dワードアート）」
-# - Excel(pack) 1枚で完結: VOW / CHAR / STAGE / QUOTES
-# - Step1: 誓願入力（スライダー + テキスト）
-# - Step3: QUBO(one-hot制約)で「観測された神」算出 + 理由 + 神託
-# - QUOTES神託: 温度付きで近い格言を選択
-# - 追加: 4) テキストのキーワード抽出 UI に「縁の球体（3D）」を表示
-#
-# UI要望反映:
-# - 背景/グラフ/表をダーク統一
-# - file_uploader / text_input の白地問題をCSSで解消
-# - 格言カードは（緑）（青）を継承
-# - 12神ギャラリーは不要 → 非表示
+# Q-Quest 量子神託（QUBO / STAGE×QUOTES） + 「縁の球体」(アート)
+# - one-hot制約のQUBOで12神を観測
+# - 誓願テキストからキーワード抽出し、単語の球体(アート)を表示（4枠）
+# - UI: ダーク統一（file_uploader/入力/表/グラフ背景も黒）
+# - Excel検出: VOW列検出を緩く（不足列は0補完、エラーで止めない）
 # ============================================================
 
+import io
 import os
 import re
-import math
-import zlib
 import time
+import zlib
+import hashlib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from PIL import Image
+
 
 # ------------------------------------------------------------
-# Streamlit config (must be first)
+# 0) Streamlit config（必ず最初）
 # ------------------------------------------------------------
-st.set_page_config(page_title="Q-Quest 量子神託（QUBO / STAGE×QUOTES）", layout="wide")
+st.set_page_config(
+    page_title="Q-Quest 量子神託（QUBO / STAGE×QUOTES）",
+    layout="wide",
+)
 
-APP_TITLE = "🔮 Q-Quest 量子神託（QUBO / STAGE×QUOTES）"
 
 # ------------------------------------------------------------
-# Dark UI CSS
+# 1) CSS（全体ダーク / 入力 / uploader / 表 / expander / plotly）
 # ------------------------------------------------------------
 DARK_CSS = """
 <style>
-/* ===== App background ===== */
+:root{
+  --bg0: rgba(6,8,18,1);
+  --bg1: rgba(10,12,26,1);
+  --panel: rgba(255,255,255,0.06);
+  --panel2: rgba(255,255,255,0.08);
+  --border: rgba(255,255,255,0.12);
+  --text: rgba(245,245,255,0.94);
+  --muted: rgba(235,235,255,0.72);
+  --accent: rgba(255,80,80,0.95);
+  --chip: rgba(255,255,255,0.10);
+}
+
+/* app background */
 .stApp{
   background:
-    radial-gradient(circle at 18% 24%, rgba(110,150,255,0.14), transparent 40%),
-    radial-gradient(circle at 78% 68%, rgba(255,160,220,0.10), transparent 48%),
-    radial-gradient(circle at 50% 50%, rgba(255,255,255,0.035), transparent 60%),
-    linear-gradient(180deg, rgba(6,8,18,1), rgba(10,12,26,1));
+    radial-gradient(circle at 18% 24%, rgba(110,150,255,0.12), transparent 38%),
+    radial-gradient(circle at 78% 68%, rgba(255,160,220,0.08), transparent 44%),
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,0.03), transparent 55%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
 }
 
-/* ===== Typography ===== */
-.block-container{ padding-top: 1.0rem; }
+/* main padding */
+.block-container{ padding-top: 1.2rem; }
+
+/* base typography */
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li{
+  color: var(--text);
+  font-family: "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  letter-spacing: 0.02em;
+}
 h1,h2,h3,h4{
-  color: rgba(245,245,255,0.95) !important;
+  color: rgba(250,250,255,0.96) !important;
+  font-family: "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif !important;
   font-weight: 650 !important;
 }
-div[data-testid="stMarkdownContainer"] p,
-div[data-testid="stMarkdownContainer"] li,
-label, .stCaption{
-  color: rgba(245,245,255,0.86) !important;
-}
 
-/* ===== Sidebar ===== */
+/* sidebar */
 section[data-testid="stSidebar"]{
   background: rgba(255,255,255,0.07);
-  border-right: 1px solid rgba(255,255,255,0.10);
+  border-right: 1px solid var(--border);
   backdrop-filter: blur(10px);
 }
+section[data-testid="stSidebar"] *{
+  color: var(--text);
+}
 
-/* ===== Inputs (text/file/select) darken ===== */
+/* --- inputs: text area / text input / select / number --- */
 div[data-testid="stTextArea"] textarea,
 div[data-testid="stTextInput"] input,
 div[data-testid="stNumberInput"] input{
   background: rgba(0,0,0,0.35) !important;
-  color: rgba(245,245,255,0.92) !important;
-  border: 1px solid rgba(255,255,255,0.14) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+}
+div[data-testid="stTextArea"] textarea::placeholder,
+div[data-testid="stTextInput"] input::placeholder{
+  color: rgba(235,235,255,0.55) !important;
 }
 
+/* selectbox */
+div[data-testid="stSelectbox"] > div{
+  background: rgba(0,0,0,0.35) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+}
+div[data-testid="stSelectbox"] *{
+  color: var(--text) !important;
+}
+
+/* file uploader (白地対策の本丸) */
 div[data-testid="stFileUploader"]{
-  background: rgba(0,0,0,0.28) !important;
-  border: 1px dashed rgba(255,255,255,0.22) !important;
+  background: rgba(0,0,0,0.30) !important;
+  border: 1px dashed rgba(255,255,255,0.25) !important;
   border-radius: 14px !important;
   padding: 10px !important;
 }
 div[data-testid="stFileUploader"] *{
-  color: rgba(245,245,255,0.88) !important;
+  color: var(--text) !important;
 }
 div[data-testid="stFileUploader"] button{
   background: rgba(255,255,255,0.10) !important;
+  color: var(--text) !important;
   border: 1px solid rgba(255,255,255,0.18) !important;
-  color: rgba(245,245,255,0.92) !important;
-  border-radius: 10px !important;
-}
-
-div[data-testid="stSelectbox"] > div{
-  background: rgba(0,0,0,0.30) !important;
-  border: 1px solid rgba(255,255,255,0.14) !important;
   border-radius: 12px !important;
 }
 
-/* ===== Buttons ===== */
-.stButton > button{
+/* sliders */
+div[data-testid="stSlider"] *{ color: var(--text) !important; }
+
+/* buttons */
+.stButton>button{
   border-radius: 14px !important;
   border: 1px solid rgba(255,255,255,0.18) !important;
-  color: rgba(245,245,255,0.92) !important;
-  background: rgba(255,255,255,0.10) !important;
+  background: linear-gradient(90deg, rgba(255,80,80,0.85), rgba(160,120,255,0.65)) !important;
+  color: rgba(255,255,255,0.98) !important;
+  padding: 0.55rem 0.9rem !important;
 }
-.stButton > button:hover{
-  background: rgba(255,255,255,0.15) !important;
+.stButton>button:hover{
+  filter: brightness(1.07);
 }
 
-/* ===== Card ===== */
+/* expander */
+details{
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  border-radius: 14px !important;
+  padding: 6px 10px !important;
+}
+details summary{ color: var(--text) !important; }
+
+/* plotly container */
+div[data-testid="stPlotlyChart"] > div{
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.28);
+}
+div[data-testid="stPlotlyChart"] > div::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(120,160,255,0.10), transparent 45%),
+    radial-gradient(circle at 70% 65%, rgba(255,180,220,0.06), transparent 52%),
+    radial-gradient(circle at 50% 50%, rgba(0,0,0,0.00), rgba(0,0,0,0.38));
+  pointer-events:none;
+}
+
+/* dataframe/table (ヘッダ白問題の解決) */
+div[data-testid="stDataFrame"]{
+  background: rgba(0,0,0,0.25) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  border-radius: 14px !important;
+  padding: 6px !important;
+}
+div[data-testid="stDataFrame"] *{
+  color: rgba(245,245,255,0.92) !important;
+}
+div[data-testid="stDataFrame"] thead tr th{
+  background: rgba(0,0,0,0.70) !important;
+  color: rgba(255,255,255,0.95) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.12) !important;
+}
+div[data-testid="stDataFrame"] tbody tr td{
+  background: rgba(0,0,0,0.35) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+}
+
+/* captions */
+.smallnote{opacity:0.80; font-size:0.92rem;}
 .card{
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.10);
@@ -119,238 +196,536 @@ div[data-testid="stSelectbox"] > div{
   box-shadow: 0 18px 60px rgba(0,0,0,0.18);
 }
 
-/* ===== Quote boxes (継承したい雰囲気) ===== */
+/* quote boxes (雰囲気継承) */
 .quote-green{
-  background: rgba(120, 255, 170, 0.14);
-  border: 1px solid rgba(120, 255, 170, 0.24);
-  color: rgba(210, 255, 225, 0.95);
-  border-radius: 14px;
-  padding: 14px 16px;
-  box-shadow: 0 12px 44px rgba(0,0,0,0.22);
+  background: rgba(28, 95, 55, 0.55);
+  border: 1px solid rgba(70, 190, 120, 0.35);
+  color: rgba(225,255,235,0.95);
+  border-radius: 16px;
+  padding: 14px 14px;
 }
-.quote-green b{ color: rgba(90, 255, 160, 0.95); }
-
 .quote-blue{
-  background: rgba(90, 150, 255, 0.16);
-  border: 1px solid rgba(90, 150, 255, 0.26);
-  color: rgba(210, 230, 255, 0.95);
-  border-radius: 14px;
-  padding: 14px 16px;
-  box-shadow: 0 12px 44px rgba(0,0,0,0.22);
+  background: rgba(20, 70, 140, 0.55);
+  border: 1px solid rgba(120, 170, 255, 0.35);
+  color: rgba(230,245,255,0.97);
+  border-radius: 16px;
+  padding: 14px 14px;
 }
-.quote-blue b{ color: rgba(130, 190, 255, 0.95); }
-
-/* ===== DataFrame/Table darken (header white -> dark) ===== */
-div[data-testid="stDataFrame"]{
-  background: rgba(0,0,0,0.00) !important;
-}
-div[data-testid="stDataFrame"] thead tr th{
-  background: rgba(10,12,26,1) !important;
-  color: rgba(245,245,255,0.90) !important;
-  border-bottom: 1px solid rgba(255,255,255,0.12) !important;
-}
-div[data-testid="stDataFrame"] tbody tr td{
-  background: rgba(0,0,0,0.20) !important;
-  color: rgba(245,245,255,0.88) !important;
-  border-bottom: 1px solid rgba(255,255,255,0.07) !important;
-}
-
-/* ===== Plotly container look ===== */
-div[data-testid="stPlotlyChart"] > div{
-  border-radius: 18px;
-  overflow: hidden;
-  box-shadow: 0 18px 60px rgba(0,0,0,0.30);
-}
+.quote-blue b{ color: rgba(210,235,255,1.0); }
 </style>
 """
 st.markdown(DARK_CSS, unsafe_allow_html=True)
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
-def safe_float(x, default=0.0) -> float:
-    try:
-        if pd.isna(x):
-            return default
-        return float(x)
-    except Exception:
-        return default
-
-def softmax_stable(x: np.ndarray, temperature: float = 1.0) -> np.ndarray:
-    t = max(1e-9, float(temperature))
-    z = (x - np.max(x)) / t
-    e = np.exp(z)
-    return e / (np.sum(e) + 1e-12)
-
-def make_seed(s: str) -> int:
-    return int(zlib.adler32(s.encode("utf-8")) & 0xFFFFFFFF)
-
-def df_dark_style(df: pd.DataFrame):
-    """st.dataframeに渡せるStyler（ヘッダ/セルを黒系に統一）"""
-    try:
-        return (
-            df.style
-            .set_table_styles([
-                {"selector":"th", "props":[("background-color","rgba(10,12,26,1)"),
-                                          ("color","rgba(245,245,255,0.90)"),
-                                          ("border-bottom","1px solid rgba(255,255,255,0.12)")]},
-                {"selector":"td", "props":[("background-color","rgba(0,0,0,0.20)"),
-                                          ("color","rgba(245,245,255,0.88)"),
-                                          ("border-bottom","1px solid rgba(255,255,255,0.07)")]},
-                {"selector":"table", "props":[("border-collapse","collapse")]}
-            ])
-        )
-    except Exception:
-        return df
 
 # ------------------------------------------------------------
-# Load Excel pack
-# -------------------------------------------------------------
-def load_pack(xlsx_bytes: bytes) -> Dict[str, pd.DataFrame]:
-    # sheet_name=None で一括読み込み（ポインタ問題を回避）
-    book = pd.read_excel(pd.io.common.BytesIO(xlsx_bytes), sheet_name=None, engine="openpyxl")
+# 2) 定数（VOWの表示名）
+# ------------------------------------------------------------
+VOW_TITLES = {
+    "VOW_01": "迷いを断つ",
+    "VOW_02": "静けさを保ち、焦らず待つ",
+    "VOW_03": "内面の洞察を深める",
+    "VOW_04": "行動に踏み出す",
+    "VOW_05": "つながりを育む",
+    "VOW_06": "挑戦を選ぶ",
+    "VOW_07": "焦りと迷いを手放す",
+    "VOW_08": "小さく動く",
+    "VOW_09": "つながりと挑戦",
+    "VOW_10": "判断を急がず、機を待つ",
+    "VOW_11": "静けさとつながり",
+    "VOW_12": "行動と挑戦を加速",
+}
+VOW_KEYS = list(VOW_TITLES.keys())
 
-    # キーを正規化（大文字＋前後空白除去）
-    sheets = {str(k).strip().upper(): v for k, v in book.items()}
-
-    # 取り出し（別名も許容）
-    def pick(*cands):
-        for c in cands:
-            if c in sheets:
-                df = sheets[c].copy()
-                # 列名を正規化（重要：空白/全角スペース/改行など）
-                df.columns = [str(col).replace("\u3000", " ").strip() for col in df.columns]
-                return df
-        return pd.DataFrame()
-
-    return {
-        "VOW": pick("VOW"),
-        "CHAR": pick("CHAR", "CHARS", "CHARA"),
-        "STAGE": pick("STAGE", "SEASON", "TIME"),
-        "QUOTES": pick("QUOTES", "QUOTE"),
-    }
 
 # ------------------------------------------------------------
-# Text -> keywords (simple, fast)
+# 3) Excel読み込み（ゆるい検出）
 # ------------------------------------------------------------
-STOP = set(["した","たい","いる","こと","それ","これ","ため","よう","ので","から","です","ます","ある","ない","そして","でも","しかし","また",
-            "自分","私","あなた","もの","感じ","気持ち","今日","今","に","を","が","は","と","も","で","へ","や","の"])
+def _sha(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
 
-def extract_keywords_simple(text: str, top_n: int = 5) -> List[str]:
-    text = (text or "").strip()
-    if not text:
+
+def _norm_col(c: str) -> str:
+    """列名をゆるく正規化（全角/半角/空白/大小など吸収）"""
+    s = str(c).strip()
+    s = s.replace("　", " ").strip()
+    s = s.upper()
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("-", "_")
+    return s
+
+
+def _guess_vow_cols(df: pd.DataFrame) -> Tuple[Dict[str, str], List[str]]:
+    """
+    df内のVOW列をゆるく検出。
+    戻り: (canonical->actual_col のマップ, 見つからなかったcanonical一覧)
+    """
+    actual_cols = list(df.columns)
+    norm_map = {_norm_col(c): c for c in actual_cols}
+
+    found: Dict[str, str] = {}
+    missing: List[str] = []
+
+    for canonical in VOW_KEYS:
+        # canonical: VOW_01
+        target_num = canonical.split("_")[1]  # "01"
+        # いろんな表記ゆれを許容
+        patterns = [
+            f"VOW_{target_num}",
+            f"VOW{target_num}",
+            f"VOW_{int(target_num)}",     # VOW_1
+            f"VOW{int(target_num)}",      # VOW1
+        ]
+        hit = None
+        for p in patterns:
+            if p in norm_map:
+                hit = norm_map[p]
+                break
+
+        # さらにゆるい：正規表現で拾う
+        if hit is None:
+            # 例: "VOW01(重み)" / "vow_01_weight" / "VOW_01 " 等
+            rgx = re.compile(rf"^VOW_?0?{int(target_num)}($|[^0-9].*)", re.I)
+            for nc, orig in norm_map.items():
+                if rgx.match(nc):
+                    hit = orig
+                    break
+
+        if hit is None:
+            missing.append(canonical)
+        else:
+            found[canonical] = hit
+
+    return found, missing
+
+
+def _find_best_sheet(excel: pd.ExcelFile) -> Tuple[str, pd.DataFrame]:
+    """
+    「CHARの定義 + VOW列」が入ってそうなシートを探して返す。
+    優先:
+      1) 列に CHAR_ID/神/NAME などがあり、VOWが複数ある
+      2) なければ最初のシート
+    """
+    best_name = excel.sheet_names[0]
+    best_score = -1
+    best_df = excel.parse(best_name)
+
+    for name in excel.sheet_names:
+        try:
+            df = excel.parse(name)
+        except Exception:
+            continue
+        cols = [_norm_col(c) for c in df.columns]
+
+        has_char = any(c in ("CHAR_ID", "CHARID", "ID") for c in cols) or any("神" in str(c) for c in df.columns)
+        vow_found, _ = _guess_vow_cols(df)
+        vow_count = len(vow_found)
+
+        score = 0
+        if has_char:
+            score += 3
+        score += vow_count
+
+        if score > best_score:
+            best_score = score
+            best_name = name
+            best_df = df
+
+    return best_name, best_df
+
+
+@dataclass
+class ExcelPack:
+    sheet_used: str
+    df_char: pd.DataFrame
+    df_quotes: Optional[pd.DataFrame]
+
+
+@st.cache_data(show_spinner=False)
+def load_excel_pack(excel_bytes: bytes, file_hash: str) -> ExcelPack:
+    bio = io.BytesIO(excel_bytes)
+    xls = pd.ExcelFile(bio, engine="openpyxl")
+
+    sheet_used, df_char = _find_best_sheet(xls)
+
+    # QUOTESシートはあれば読む（なければNone）
+    df_quotes = None
+    for s in xls.sheet_names:
+        if _norm_col(s) in ("QUOTES", "QUOTE", "格言", "コトワザ"):
+            try:
+                df_quotes = xls.parse(s)
+            except Exception:
+                df_quotes = None
+            break
+
+    return ExcelPack(sheet_used=sheet_used, df_char=df_char, df_quotes=df_quotes)
+
+
+# ------------------------------------------------------------
+# 4) QUBO（one-hot）: E(x)= sum(E_i x_i) + P(sum x -1)^2
+# ------------------------------------------------------------
+def solve_onehot_qubo_sa(E: np.ndarray, P: float, sweeps: int, temp: float, rng: np.random.Generator) -> Tuple[np.ndarray, float]:
+    """
+    12個くらいなら厳密解でも良いが、雰囲気としてSAで解く。
+    """
+    n = len(E)
+    # 初期はランダムone-hot
+    x = np.zeros(n, dtype=int)
+    x[rng.integers(0, n)] = 1
+
+    def energy(xv: np.ndarray) -> float:
+        return float(np.dot(E, xv) + P * (np.sum(xv) - 1) ** 2)
+
+    curE = energy(x)
+    bestx = x.copy()
+    bestE = curE
+
+    # SA
+    T0 = max(1e-6, float(temp))
+    for t in range(int(sweeps)):
+        T = T0 * (0.995 ** t)  # ほんのり冷却
+
+        # one-hotのまま遷移（1を別位置へ移す）
+        i1 = int(np.argmax(x))
+        i2 = int(rng.integers(0, n))
+        if i2 == i1:
+            continue
+
+        x2 = x.copy()
+        x2[i1] = 0
+        x2[i2] = 1
+
+        e2 = energy(x2)
+        dE = e2 - curE
+        if dE <= 0 or rng.random() < np.exp(-dE / max(T, 1e-9)):
+            x = x2
+            curE = e2
+            if curE < bestE:
+                bestE = curE
+                bestx = x.copy()
+
+    return bestx, bestE
+
+
+# ------------------------------------------------------------
+# 5) QUOTES（雰囲気継承：緑/青）
+# ------------------------------------------------------------
+def pick_text(row: pd.Series, candidates: List[str]) -> str:
+    for c in candidates:
+        if c in row.index:
+            v = str(row.get(c, "")).strip()
+            if v and v.lower() not in ("nan", "none"):
+                return v
+    return ""
+
+
+def build_quotes(df_quotes: Optional[pd.DataFrame]) -> List[Dict]:
+    base = [
+        {"quote": "未来は私たちの選択にかかっている。", "source": "カール・J・フォンペルティ"},
+        {"quote": "途中であきらめちゃいけない。", "source": "ルイ・アームストロング"},
+        {"quote": "人生の最良の瞬間は、今この瞬間だ。", "source": "ヒンディーのことわざ"},
+        {"quote": "過去は過去であり、未来は未来である。今この瞬間こそがプレゼントだ。", "source": "エリオット・D・アディ"},
+        {"quote": "成功は、自分の強みを活かすことから始まる。", "source": "ピーター・ドラッカー"},
+    ]
+    if df_quotes is None or df_quotes.empty:
+        return base
+
+    quotes = []
+    for _, row in df_quotes.iterrows():
+        qt = pick_text(row, ["格言", "QUOTE", "Quote", "quote", "言葉", "文"])
+        if not qt:
+            continue
+        src = pick_text(row, ["出典", "SOURCE", "Source", "作者", "典拠"]) or "—"
+        quotes.append({"quote": qt, "source": src})
+
+    # baseを足して最低限確保
+    if len(quotes) < 3:
+        quotes = quotes + base
+    return quotes
+
+
+def choose_quotes_with_temperature(quotes: List[Dict], temperature: float, k: int, rng: np.random.Generator) -> List[Dict]:
+    """
+    温度が高いほどランダム、低いほど上位（ここでは擬似的に先頭寄り）。
+    """
+    if not quotes:
         return []
-    s = re.sub(r"[0-9０-９、。．,.!！?？\(\)\[\]{}「」『』\"'：:;／/\\\n\r\t]+", " ", text)
-    tokens = [t.strip() for t in re.split(r"\s+", s) if t.strip()]
-    tokens = [t for t in tokens if len(t) >= 2 and t not in STOP]
-    # 日本語が連続でスペースなしの場合の保険（ざっくり）
-    if not tokens and len(text) >= 2:
-        tokens = [text[:4], text[-4:]] if len(text) >= 8 else [text]
-    # 長い順
-    tokens = sorted(list(dict.fromkeys(tokens)), key=lambda x: (-len(x), x))
-    return tokens[:top_n]
+
+    temperature = float(np.clip(temperature, 0.2, 2.0))
+    n = len(quotes)
+
+    # 擬似スコア: 先頭ほど良い
+    scores = np.linspace(1.0, 0.3, n)
+
+    # 温度でsoftmax
+    logits = scores / temperature
+    ex = np.exp(logits - np.max(logits))
+    p = ex / np.sum(ex)
+
+    idx = rng.choice(np.arange(n), size=min(k, n), replace=False, p=p)
+    return [quotes[i] for i in idx]
+
 
 # ------------------------------------------------------------
-# Word-art network (energy closeness)  ※軽量版
+# 6) キーワード抽出（簡易） + 球体アート（Plotly 3D）
 # ------------------------------------------------------------
 GLOBAL_WORDS_DATABASE = [
-    "迷い","決断","挑戦","静けさ","焦り","待つ","行動","つながり","勇気","学び","成長","継続","回復","希望","未来","覚悟","集中",
-    "安心","不安","整理","選択","軸","整える","視点","工夫","忍耐","調和","流れ","変化","前進","一歩",
+    "世界平和","貢献","成長","学び","挑戦","夢","希望","未来",
+    "感謝","愛","幸せ","喜び","安心","充実","満足","平和",
+    "努力","継続","忍耐","誠実","正直","優しさ","思いやり","共感",
+    "調和","バランス","自然","美","真実","自由","正義","道",
+    "絆","つながり","家族","友人","仲間","信頼","尊敬","協力",
+    "今","瞬間","過程","変化","進化","発展","循環","流れ",
+    "静けさ","集中","覚悟","決意","勇気","強さ","柔軟性","寛容",
 ]
+CATEGORIES = {
+    "願い": ["世界平和","貢献","成長","夢","希望","未来"],
+    "感情": ["感謝","愛","幸せ","喜び","安心","満足","平和"],
+    "行動": ["努力","継続","忍耐","誠実","正直"],
+    "哲学": ["調和","バランス","自然","美","道","真実","自由","正義"],
+    "関係": ["絆","つながり","家族","友人","仲間","信頼","尊敬","協力"],
+    "内的": ["静けさ","集中","覚悟","決意","勇気","強さ","柔軟性","寛容"],
+    "時間": ["今","瞬間","過程","変化","進化","発展","循環","流れ"],
+}
+STOP_TOKENS = set([
+    "した","たい","いる","こと","それ","これ","ため","よう","ので","から",
+    "です","ます","ある","ない","そして","でも","しかし","また",
+    "自分","私","あなた","もの","感じ","気持ち","今日",
+    "に","を","が","は","と","も","で","へ","や","の"
+])
 
-def calculate_similarity(w1: str, w2: str) -> float:
-    if w1 == w2:
+
+def extract_keywords(text: str, top_n: int = 5) -> List[str]:
+    text = (text or "").strip()
+    if not text:
+        return ["静けさ", "迷い"]
+
+    found = [w for w in GLOBAL_WORDS_DATABASE if w in text]
+    if found:
+        return found[:top_n]
+
+    text_clean = re.sub(r"[0-9０-９、。．,.!！?？\(\)\[\]{}「」『』\"'：:;／/\\\n\r\t]+", " ", text)
+    tokens = [t.strip() for t in re.split(r"\s+", text_clean) if t.strip()]
+    tokens = [t for t in tokens if (len(t) >= 2 and t not in STOP_TOKENS)]
+    if not tokens:
+        return ["静けさ", "迷い"]
+    tokens = sorted(tokens, key=lambda s: (-len(s), s))
+    return tokens[:top_n]
+
+
+def calculate_semantic_similarity(word1: str, word2: str) -> float:
+    if word1 == word2:
         return 1.0
-    c1, c2 = set(w1), set(w2)
-    inter = len(c1 & c2)
-    denom = max(len(c1), len(c2), 1)
-    return float(np.clip(inter / denom, 0.0, 1.0))
+    common_chars = set(word1) & set(word2)
+    char_sim = len(common_chars) / max(len(set(word1)), len(set(word2)), 1)
 
-def energy_between(w1: str, w2: str, rng: np.random.Generator, jitter: float) -> float:
-    sim = calculate_similarity(w1, w2)
-    e = -2.0 * sim + 0.5
+    category_sim = 0.0
+    for _, ws in CATEGORIES.items():
+        w1_in = word1 in ws
+        w2_in = word2 in ws
+        if w1_in and w2_in:
+            category_sim = 1.0
+            break
+        elif w1_in or w2_in:
+            category_sim = max(category_sim, 0.3)
+
+    len_sim = 1.0 - abs(len(word1) - len(word2)) / max(len(word1), len(word2), 1)
+    similarity = 0.4 * char_sim + 0.4 * category_sim + 0.2 * len_sim
+    return float(np.clip(similarity, 0.0, 1.0))
+
+
+def calculate_energy_between_words(word1: str, word2: str, rng: np.random.Generator, jitter: float) -> float:
+    similarity = calculate_semantic_similarity(word1, word2)
+    energy = -2.0 * similarity + 0.5
+    common = set(word1) & set(word2)
+    if common:
+        energy -= 0.20 * len(common) / max(len(word1), len(word2), 1)
+    for _, ws in CATEGORIES.items():
+        if (word1 in ws) and (word2 in ws):
+            energy -= 0.60
+            break
     if jitter > 0:
-        e += rng.normal(0, jitter)
-    return float(e)
+        energy += rng.normal(0, jitter)
+    return float(energy)
 
-def build_word_network(center_words: List[str], n_total: int, jitter: float, seed: int) -> Dict:
-    rng = np.random.default_rng(seed)
-    base = list(dict.fromkeys(center_words + GLOBAL_WORDS_DATABASE))
-    energies = {}
-    for w in base:
+
+def build_qubo_matrix_for_words(words: List[str], rng: np.random.Generator, jitter: float) -> np.ndarray:
+    n = len(words)
+    Q = np.zeros((n, n), dtype=float)
+    np.fill_diagonal(Q, -0.5)
+    for i in range(n):
+        for j in range(i + 1, n):
+            e = calculate_energy_between_words(words[i], words[j], rng, jitter)
+            Q[i, j] = e
+            Q[j, i] = e
+    return Q
+
+
+def build_word_network(center_words: List[str], database: List[str], n_total: int,
+                       rng: np.random.Generator, jitter: float) -> Dict:
+    all_words = list(dict.fromkeys(center_words + database))
+    energies: Dict[str, float] = {}
+    for w in all_words:
         if w in center_words:
             energies[w] = -3.0
         else:
-            e_list = [energy_between(c, w, rng, jitter) for c in center_words] if center_words else [0.0]
+            e_list = [calculate_energy_between_words(c, w, rng, jitter) for c in center_words]
             energies[w] = float(np.mean(e_list))
-    # select low energy first
-    selected = [w for w in center_words if w in energies]
-    for w, _ in sorted(energies.items(), key=lambda x: x[1]):
+
+    sorted_words = sorted(energies.items(), key=lambda x: x[1])
+    selected: List[str] = []
+    for w, _ in sorted_words:
+        if w in center_words and w not in selected:
+            selected.append(w)
+    for w, _ in sorted_words:
         if w not in selected:
             selected.append(w)
         if len(selected) >= n_total:
             break
 
-    # edges
-    edges = []
-    for i in range(len(selected)):
-        for j in range(i+1, len(selected)):
-            e = energy_between(selected[i], selected[j], rng, 0.0)
+    Q = build_qubo_matrix_for_words(selected, rng, jitter)
+    center_indices = [i for i, w in enumerate(selected) if w in center_words]
+
+    edges: List[Tuple[int, int, float]] = []
+    n = len(selected)
+    for i in range(n):
+        for j in range(i + 1, n):
+            e = Q[i, j]
             if e < -0.25:
-                edges.append((i, j, e))
+                edges.append((i, j, float(e)))
 
-    return {"words": selected, "energies": {w: energies[w] for w in selected}, "edges": edges}
+    return {
+        "words": selected,
+        "energies": {w: energies[w] for w in selected},
+        "edges": edges,
+        "Q": Q,
+        "center_indices": center_indices,
+    }
 
-def layout_sphere(words: List[str], energies: Dict[str,float], center_set: set, seed: int) -> np.ndarray:
-    rng = np.random.default_rng(seed)
+
+def solve_qubo_placement(Q: np.ndarray, words: List[str], center_indices: List[int], energies: Dict[str, float],
+                         rng: np.random.Generator, n_iterations: int = 80) -> np.ndarray:
     n = len(words)
-    pos = np.zeros((n,3), dtype=float)
+    pos = np.zeros((n, 3), dtype=float)
+    for idx in center_indices:
+        if idx < n:
+            pos[idx] = [0.0, 0.0, 0.0]
 
-    # spread points on sphere-ish (golden spiral) with energy-based radius
-    golden = np.pi * (3 - np.sqrt(5))
-    ev = list(energies.values()) if energies else [0.0]
-    mn, mx = min(ev), max(ev)
-    er = (mx - mn) if mx != mn else 1.0
+    ev = list(energies.values()) if energies else []
+    if ev:
+        mn, mx = min(ev), max(ev)
+        er = (mx - mn) if mx != mn else 1.0
+    else:
+        mn, er = -3.0, 3.0
 
+    golden_angle = np.pi * (3 - np.sqrt(5))
     k = 0
-    for i, w in enumerate(words):
-        if w in center_set:
-            pos[i] = [0.0, 0.0, 0.0]
-            continue
-        e = energies.get(w, 0.0)
-        norm = (e - mn) / er
-        radius = 0.8 + (1.0 - norm) * 1.8
 
-        theta = golden * k
-        y = 1 - (k / float(max(1, n-2))) * 2
-        r = math.sqrt(max(0.0, 1 - y*y))
-        x = math.cos(theta) * r * radius
-        z = math.sin(theta) * r * radius
-        pos[i] = [x, y*radius*0.7, z]
+    for i in range(n):
+        if i in center_indices:
+            continue
+        w = words[i]
+        e = energies.get(w, 0.0)
+        norm = (e - mn) / er if er > 0 else 0.5
+        dist = 0.3 + (1.0 - norm) * 2.2
+        theta = golden_angle * k
+        y = 1 - (k / float(max(1, n - len(center_indices) - 1))) * 2
+        r = np.sqrt(max(0.0, 1 - y * y))
+        x = np.cos(theta) * r * dist
+        z = np.sin(theta) * r * dist
+        pos[i] = [x, y * dist * 0.6, z]
         k += 1
 
-    # small jitter for aesthetics
-    pos += rng.normal(0, 0.02, size=pos.shape)
+    for _ in range(int(n_iterations)):
+        for i in range(n):
+            if i in center_indices:
+                continue
+            force = np.zeros(3, dtype=float)
+
+            for cidx in center_indices:
+                vec = pos[cidx] - pos[i]
+                d = np.linalg.norm(vec)
+                if d > 0.01:
+                    w = words[i]
+                    e = energies.get(w, 0.0)
+                    norm = (e - mn) / er if er > 0 else 0.5
+                    target = 0.3 + (1.0 - norm) * 2.2
+                    if d < target * 0.9:
+                        force -= vec / d * 0.05
+                    elif d > target * 1.1:
+                        force += vec / d * 0.10
+
+            for j in range(n):
+                if i == j or j in center_indices:
+                    continue
+                eij = Q[i, j]
+                if eij < -0.3:
+                    vec = pos[j] - pos[i]
+                    d = np.linalg.norm(vec)
+                    if d > 0.01:
+                        force += vec / d * (abs(eij) * 0.08)
+                elif eij > 0.2:
+                    vec = pos[i] - pos[j]
+                    d = np.linalg.norm(vec)
+                    if d > 0.01:
+                        force += vec / d * (abs(eij) * 0.03)
+
+            pos[i] += force * 0.15
+
     return pos
 
-def plot_word_sphere(network: Dict, pos: np.ndarray, center_set: set) -> go.Figure:
-    words = network["words"]
-    energies = network["energies"]
-    edges = network["edges"]
+
+def make_seed(s: str) -> int:
+    return int(zlib.adler32(s.encode("utf-8")) & 0xFFFFFFFF)
+
+
+def build_sphere_figure(user_text: str, topn_kw: int, n_total: int, jitter: float, noise: float, iters: int) -> Tuple[go.Figure, List[str]]:
+    seed = make_seed(f"{user_text}|{topn_kw}|{n_total}|{jitter}|{noise}|{iters}")
+    rng = np.random.default_rng(seed)
+
+    keywords = extract_keywords(user_text, top_n=topn_kw)
+    center_set = set(keywords)
+
+    network = build_word_network(keywords, GLOBAL_WORDS_DATABASE, n_total=n_total, rng=rng, jitter=jitter)
+    pos = solve_qubo_placement(network["Q"], network["words"], network["center_indices"], network["energies"], rng=rng, n_iterations=iters)
+    if noise > 0:
+        pos = pos + rng.normal(0, noise, size=pos.shape)
 
     fig = go.Figure()
 
-    # edges
-    xE,yE,zE = [],[],[]
-    for i,j,e in edges:
-        x0,y0,z0 = pos[i]
-        x1,y1,z1 = pos[j]
-        xE += [x0,x1,None]
-        yE += [y0,y1,None]
-        zE += [z0,z1,None]
+    # stars (固定)
+    star_rng = np.random.default_rng(12345)
+    star_count = 900
+    sx = star_rng.uniform(-3.2, 3.2, star_count)
+    sy = star_rng.uniform(-2.4, 2.4, star_count)
+    sz = star_rng.uniform(-2.0, 2.0, star_count)
+    alpha = np.full(star_count, 0.22, dtype=float)
+    star_size = star_rng.uniform(1.0, 2.4, star_count)
+    star_colors = [f"rgba(255,255,255,{a})" for a in alpha]
     fig.add_trace(go.Scatter3d(
-        x=xE,y=yE,z=zE, mode="lines",
-        line=dict(width=1, color="rgba(200,220,255,0.22)"),
+        x=sx, y=sy, z=sz,
+        mode="markers",
+        marker=dict(size=star_size, color=star_colors),
+        hoverinfo="skip",
+        showlegend=False
+    ))
+
+    words = network["words"]
+    energies = network["energies"]
+    edges = network["edges"]
+    center_indices = network["center_indices"]
+
+    # edges
+    xE, yE, zE = [], [], []
+    for i, j, e in edges:
+        x0, y0, z0 = pos[i]
+        x1, y1, z1 = pos[j]
+        xE += [x0, x1, None]
+        yE += [y0, y1, None]
+        zE += [z0, z1, None]
+    fig.add_trace(go.Scatter3d(
+        x=xE, y=yE, z=zE,
+        mode="lines",
+        line=dict(width=1, color="rgba(200,220,255,0.20)"),
         hoverinfo="skip",
         showlegend=False
     ))
@@ -359,482 +734,523 @@ def plot_word_sphere(network: Dict, pos: np.ndarray, center_set: set) -> go.Figu
     sizes, colors, labels = [], [], []
     for w in words:
         e = energies.get(w, 0.0)
-        labels.append(w)
         if w in center_set:
-            sizes.append(26)
+            sizes.append(28)
             colors.append("rgba(255,235,100,0.98)")
+            labels.append(w)
         else:
-            en = min(1.0, abs(e)/3.0)
-            sizes.append(10 + int(10*en))
-            colors.append("rgba(220,240,255,0.70)" if e < -0.5 else "rgba(255,255,255,0.55)")
+            en = min(1.0, abs(e) / 3.0)
+            sizes.append(12 + int(8 * en))
+            if e < -1.5:
+                colors.append("rgba(180,220,255,0.85)")
+            elif e < -0.5:
+                colors.append("rgba(220,240,255,0.72)")
+            else:
+                colors.append("rgba(255,255,255,0.55)")
+            labels.append(w)
 
-    idx_center = [i for i,w in enumerate(words) if w in center_set]
-    idx_other  = [i for i,w in enumerate(words) if w not in center_set]
+    center_idx = [i for i, w in enumerate(labels) if w in center_set]
+    other_idx = [i for i, w in enumerate(labels) if w not in center_set]
 
-    if idx_other:
-        oi = np.array(idx_other, dtype=int)
+    if other_idx:
+        oi = np.array(other_idx, dtype=int)
         fig.add_trace(go.Scatter3d(
-            x=pos[oi,0], y=pos[oi,1], z=pos[oi,2],
+            x=pos[oi, 0], y=pos[oi, 1], z=pos[oi, 2],
             mode="markers+text",
             text=[labels[i] for i in oi],
             textposition="top center",
-            textfont=dict(size=16, color="rgba(245,245,255,0.92)"),
-            marker=dict(size=[sizes[i] for i in oi], color=[colors[i] for i in oi],
-                        line=dict(width=1, color="rgba(0,0,0,0.18)")),
+            textfont=dict(size=18, color="rgba(255,255,255,1.0)"),
+            marker=dict(size=[sizes[i] for i in oi], color=[colors[i] for i in oi]),
             hovertemplate="<b>%{text}</b><extra></extra>",
             showlegend=False
         ))
-    if idx_center:
-        ci = np.array(idx_center, dtype=int)
+
+    if center_idx:
+        ci = np.array(center_idx, dtype=int)
         fig.add_trace(go.Scatter3d(
-            x=pos[ci,0], y=pos[ci,1], z=pos[ci,2],
+            x=pos[ci, 0], y=pos[ci, 1], z=pos[ci, 2],
             mode="markers+text",
             text=[labels[i] for i in ci],
             textposition="top center",
-            textfont=dict(size=20, color="rgba(255,80,80,1.0)"),
+            textfont=dict(size=24, color="rgba(255,80,80,1.0)"),
             marker=dict(size=[sizes[i] for i in ci], color=[colors[i] for i in ci],
-                        line=dict(width=2, color="rgba(255,80,80,0.75)")),
+                        line=dict(width=2, color="rgba(255,80,80,0.8)")),
             hovertemplate="<b>%{text}</b><extra></extra>",
             showlegend=False
         ))
 
     fig.update_layout(
         paper_bgcolor="rgba(6,8,18,1)",
-        plot_bgcolor="rgba(6,8,18,1)",
-        font=dict(color="rgba(245,245,255,0.92)"),
         scene=dict(
             xaxis=dict(visible=False),
             yaxis=dict(visible=False),
             zaxis=dict(visible=False),
             bgcolor="rgba(6,8,18,1)",
-            camera=dict(eye=dict(x=1.55, y=1.10, z=1.05)),
-            dragmode="orbit"
+            camera=dict(eye=dict(x=1.6, y=1.15, z=1.05)),
+            dragmode="orbit",
         ),
-        margin=dict(l=0,r=0,t=0,b=0),
-        height=520
+        margin=dict(l=0, r=0, t=0, b=0),
     )
-    return fig
+    return fig, keywords
+
 
 # ------------------------------------------------------------
-# Sidebar: upload & parameters
+# 7) UI：サイドバー（Excel / QUBO設定 / テキスト設定 / QUOTES温度）
 # ------------------------------------------------------------
+def init_state():
+    defaults = {
+        "uploaded_excel_hash": "",
+        "P": 40.0,
+        "samples": 300,
+        "sweeps": 420,
+        "temp": 1.20,
+
+        "ngram": 3,
+        "mix_alpha": 0.55,  # 1=スライダー寄り, 0=テキスト寄り
+
+        "quote_temp": 1.20,
+        "stage_id": "ST_01|春×朝",
+        "auto_stage": True,
+
+        "wish_text": "例：迷いを断ちたいが、今は焦らず機を待つべきか悩んでいる…",
+        "vows": {k: 0.0 for k in VOW_KEYS},
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_state()
+
+
+st.title("🔮 Q-Quest 量子神託（QUBO / STAGE×QUOTES）")
+st.caption("one-hot制約のQUBOで12神を観測し、誓願（スライダー＋テキスト）と格言（緑/青）と可視化を表示します。")
+
 with st.sidebar:
     st.markdown("## 📁 データ")
-    up = st.file_uploader("統合Excel（pack）", type=["xlsx"], accept_multiple_files=False)
+    uploaded = st.file_uploader("統合Excel（pack）", type=["xlsx"])
 
     st.markdown("---")
     st.markdown("## ⚙️ QUBO設定（one-hot）")
-    P = st.slider("one-hot ペナルティ P", 1.0, 80.0, 40.0, 1.0)
-    sample_n = st.slider("サンプル数（観測分布）", 50, 800, 300, 10)
-    sa_sweeps = st.slider("SA sweeps（揺らぎ）", 50, 1200, 420, 10)
-    temperature = st.slider("SA温度（大→揺らぐ）", 0.20, 3.00, 1.20, 0.05)
+    st.slider("one-hot ペナルティ P", 1.0, 200.0, float(st.session_state["P"]), 1.0, key="P")
+    st.slider("サンプル数（観測分布）", 50, 1200, int(st.session_state["samples"]), 10, key="samples")
+    st.slider("SA sweeps（揺らぎ）", 50, 2000, int(st.session_state["sweeps"]), 10, key="sweeps")
+    st.slider("SA温度（大→揺らぐ）", 0.20, 2.00, float(st.session_state["temp"]), 0.01, key="temp")
 
     st.markdown("---")
-    st.markdown("## 🧠 テキスト→誓願（自動ベクトル化）")
-    ngram = st.selectbox("n-gram", [2, 3, 4], index=1)
-    mix_alpha = st.slider("mix比率 α（1=スライダーのみ / 0=テキストのみ）", 0.0, 1.0, 0.55, 0.01)
+    st.markdown("## 🧠 テキスト＋誓願（自動ベクトル化）")
+    st.selectbox("n-gram（簡易）", options=[2, 3, 4], index=[2,3,4].index(int(st.session_state["ngram"])), key="ngram")
+    st.slider("mix比率 α（1=スライダー寄り / 0=テキスト寄り）", 0.0, 1.0, float(st.session_state["mix_alpha"]), 0.01, key="mix_alpha")
 
     st.markdown("---")
-    st.markdown("## 💬 QUOTES神託（温度付きで選択）")
-    quote_lang = st.selectbox("LANG", ["ja", "en"], index=0)
-    quote_temp = st.slider("格言温度（高→ランダム / 低→上位固定）", 0.20, 3.00, 1.20, 0.05)
+    st.markdown("## 🟦 QUOTES神託（温度付きで選択）")
+    st.selectbox("LANG", options=["ja"], index=0)
+    st.slider("格言温度（高→ランダム / 低→上位固定）", 0.20, 2.00, float(st.session_state["quote_temp"]), 0.01, key="quote_temp")
+
 
 # ------------------------------------------------------------
-# Main
+# 8) Excelを読む（なければデモ）
 # ------------------------------------------------------------
-st.markdown(f"# {APP_TITLE}")
+excel_pack: Optional[ExcelPack] = None
+df_char: Optional[pd.DataFrame] = None
+df_quotes: Optional[pd.DataFrame] = None
+excel_status = ""
 
-if up is None:
-    st.info("左のサイドバーから **統合Excel（pack）** をアップロードしてください。")
-    st.stop()
+if uploaded is not None:
+    b = uploaded.getvalue()
+    h = _sha(b)
+    excel_pack = load_excel_pack(b, file_hash=h)
+    df_char = excel_pack.df_char
+    df_quotes = excel_pack.df_quotes
+    excel_status = f"Excel読込OK（sheet: {excel_pack.sheet_used}）"
+else:
+    excel_status = "Excel未指定（デモモード）"
 
-pack_bytes = up.getvalue()
-sheets = load_pack(pack_bytes)
+st.info(excel_status)
 
-df_vow = sheets["VOW"].copy()
-df_char = sheets["CHAR"].copy()
-df_stage = sheets["STAGE"].copy()
-df_quotes = sheets["QUOTES"].copy()
+# デモ用：12神だけ最低限作る（Excelが無い時）
+if df_char is None:
+    df_char = pd.DataFrame({
+        "CHAR_ID": [f"CHAR_{i:02d}" for i in range(1, 13)],
+        "神": ["秋葉三尺坊","真空管大将軍","LED弁財天","磁気記録黒龍","無線傍受観音","基板曼荼羅",
+              "絶対零度明王","ジャンク再生童子","真空オーディオ如来","光速通信韋駄天","半導体文殊","絶対温度明王"],
+    })
+    # VOW列（適当に形だけ）
+    for k in VOW_KEYS:
+        df_char[k] = np.random.default_rng(0).uniform(0.0, 1.0, len(df_char))
 
-# ------------------------------------------------------------
-# Normalize columns (robust)
-# ------------------------------------------------------------
-def col_pick(df: pd.DataFrame, cands: List[str]) -> Optional[str]:
-    cols = list(df.columns)
-    low = {str(c).lower(): c for c in cols}
-    for c in cands:
-        if c.lower() in low:
-            return low[c.lower()]
-    return None
 
-# VOW: id/title/desc
-vow_id_col = col_pick(df_vow, ["VOW", "VOW_ID", "ID"])
-vow_title_col = col_pick(df_vow, ["TITLE", "題", "誓願", "NAME"])
-vow_desc_col = col_pick(df_vow, ["DESC", "DESCRIPTION", "説明", "TEXT"])
+# ここが「2)検出が厳しすぎる」の対策
+# - VOW列をゆるく検出
+# - 見つからないVOWは0で補完し、止めずに警告
+vow_map, vow_missing = _guess_vow_cols(df_char)
+for canonical in VOW_KEYS:
+    if canonical not in vow_map:
+        # 無ければ作る（0）
+        df_char[canonical] = 0.0
+    else:
+        # 見つかった列名をcanonicalにコピー（元列名が変でも統一する）
+        src = vow_map[canonical]
+        if src != canonical:
+            df_char[canonical] = df_char[src]
 
-# CHAR: id/name/img/weights
-char_id_col = col_pick(df_char, ["CHAR_ID", "ID"])
-char_name_col = col_pick(df_char, ["CHAR", "NAME", "神", "TITLE"])
-char_img_col = col_pick(df_char, ["IMG", "IMAGE", "PATH", "FILE"])
-
-# W: expects columns like VOW_01.. or weights matrix
-# We'll detect weight columns as those starting with "VOW_" (case-insensitive)
-weight_cols = [c for c in df_char.columns if str(c).upper().startswith("VOW_")]
-
-# STAGE: stage_id/name etc
-stage_id_col = col_pick(df_stage, ["STAGE_ID", "ID"])
-stage_name_col = col_pick(df_stage, ["STAGE", "NAME", "TITLE"])
-
-# QUOTES: quote/source/keywords/lang
-quote_text_col = col_pick(df_quotes, ["QUOTE", "格言", "TEXT", "言葉"])
-quote_src_col  = col_pick(df_quotes, ["SOURCE", "出典", "作者", "出所"])
-quote_kw_col   = col_pick(df_quotes, ["KEYWORDS", "キーワード", "TAG", "タグ"])
-quote_lang_col = col_pick(df_quotes, ["LANG", "言語"])
-
-if df_vow.empty or df_char.empty or not weight_cols:
-    st.error("VOW/CHAR/重み列（VOW_01...）が見つかりません。Excelのシート名・列名をご確認ください。")
-    st.stop()
-
-# ------------------------------------------------------------
-# Step1: Inputs
-# ------------------------------------------------------------
-left, right = st.columns([1.6, 1.0], gap="large")
-
-with left:
-    st.markdown("## Step 1 : 誓願入力（スライダー）＋テキスト（自動ベクトル化）")
-
-    user_text = st.text_area(
-        "あなたの状況を一文で（例：疲れていて決断ができない / 新しい挑戦が怖い など）",
-        value="例：迷いを断ちたいが、今は焦らず機を待つべきか悩んでいる…",
-        height=90,
-        key="user_text"
+if vow_missing:
+    st.warning(
+        "Excel内で見つからないVOW列がありました（止めずに 0 で補完しています）: "
+        + ", ".join(vow_missing)
+        + "  ※列名例：VOW_01, VOW01, VOW_1 などは自動検出します。"
     )
 
-    # sliders
-    vow_rows = []
-    for i, row in df_vow.iterrows():
-        vid = str(row.get(vow_id_col, f"VOW_{i+1:02d}"))
-        title = str(row.get(vow_title_col, vid))
-        desc = str(row.get(vow_desc_col, "")).strip()
-        label = f"{vid}｜{title}"
-        if desc:
-            label += f" — {desc}"
+# CHAR列もゆるく（無ければ作る）
+if "CHAR_ID" not in df_char.columns:
+    # それっぽい列を探す
+    cand = None
+    for c in df_char.columns:
+        if _norm_col(c) in ("CHARID","ID"):
+            cand = c
+            break
+    if cand is not None:
+        df_char["CHAR_ID"] = df_char[cand].astype(str)
+    else:
+        df_char["CHAR_ID"] = [f"CHAR_{i:02d}" for i in range(1, len(df_char)+1)]
 
-        val = st.slider(label, 0.0, 5.0, 0.0, 0.5, key=f"sl_{vid}")
-        vow_rows.append((vid, title, val))
+if "神" not in df_char.columns:
+    # NAMEっぽい列
+    cand = None
+    for c in df_char.columns:
+        if _norm_col(c) in ("NAME","GOD","神名"):
+            cand = c
+            break
+    if cand is not None:
+        df_char["神"] = df_char[cand].astype(str)
+    else:
+        df_char["神"] = [f"神_{i:02d}" for i in range(1, len(df_char)+1)]
+
+df_char = df_char.copy()
+df_char["CHAR_ID"] = df_char["CHAR_ID"].astype(str)
+df_char["神"] = df_char["神"].astype(str)
+
 
 # ------------------------------------------------------------
-# Build vow vector (manual + text)
+# 9) Step1：誓願入力（テキスト＋スライダー）
 # ------------------------------------------------------------
-vow_ids = [v[0] for v in vow_rows]
-manual_v = np.array([v[2] for v in vow_rows], dtype=float)
+st.markdown("## Step 1：誓願入力（スライダー）＋テキスト（自動ベクトル化）")
 
-def text_to_vector(text: str, vow_titles: List[str], ngram_n: int = 3) -> np.ndarray:
-    """超軽量：char n-gramで vow title との近さを出す（0..1程度）"""
-    text = (text or "").strip()
-    if not text:
-        return np.zeros(len(vow_titles), dtype=float)
+left1, right1 = st.columns([2.1, 1.1], gap="large")
 
-    def ngrams(s: str, n: int) -> set:
-        s = re.sub(r"\s+", "", s)
-        if len(s) < n:
-            return {s} if s else set()
-        return {s[i:i+n] for i in range(len(s)-n+1)}
+with left1:
+    wish_text = st.text_area(
+        "あなたの状況を一文で（例：疲れていて決断ができない／新しい挑戦が怖い など）",
+        value=st.session_state["wish_text"],
+        height=90,
+        key="wish_text",
+    )
+    st.caption("スライダー入力はTITLEを常時表示し、テキストからの自動推定と mix します。")
 
-    tg = ngrams(text.lower(), ngram_n)
-    out = []
-    for t in vow_titles:
-        gg = ngrams(str(t).lower(), ngram_n)
-        inter = len(tg & gg)
-        denom = max(len(gg), 1)
-        out.append(inter / denom)
-    v = np.array(out, dtype=float)
-    # scale to 0..5-ish
-    if v.max() > 0:
-        v = 5.0 * (v / v.max())
+    # VOW sliders
+    for k in VOW_KEYS:
+        title = VOW_TITLES[k]
+        st.slider(
+            f"{k}｜{title}",
+            min_value=0.0,
+            max_value=5.0,
+            value=float(st.session_state["vows"].get(k, 0.0)),
+            step=0.5,
+            key=f"slider_{k}",
+        )
+    # stateに反映（widget->session代入はOK：widget keyが別なので）
+    st.session_state["vows"] = {k: float(st.session_state.get(f"slider_{k}", 0.0)) for k in VOW_KEYS}
+
+with right1:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("### Step 3：結果（観測された神＋理由＋QUOTES神託）")
+    st.caption("右側に「観測結果」「寄与した誓願」「格言（緑/青）」を表示します。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------
+# 10) 観測（QUBO one-hot）
+# ------------------------------------------------------------
+def vow_vector_from_text(text: str) -> np.ndarray:
+    """
+    簡易：テキストから抽出したキーワードがVOWタイトルに近いほど加点…などを入れても良いが
+    ここでは“雰囲気用”に、キーワード数に応じて少しだけ分配する。
+    """
+    kws = extract_keywords(text, top_n=5)
+    v = np.zeros(len(VOW_KEYS), dtype=float)
+    if not kws:
+        return v
+    # なんとなく：文字列の長さで分散
+    for i, k in enumerate(kws):
+        idx = (len(k) + i) % len(VOW_KEYS)
+        v[idx] += 1.0
+    if np.max(v) > 0:
+        v = v / np.max(v) * 2.0  # 0〜2程度
     return v
 
-vow_titles = [v[1] for v in vow_rows]
-auto_v = text_to_vector(user_text, vow_titles, ngram_n=int(ngram))
 
-mix_v = mix_alpha * manual_v + (1.0 - mix_alpha) * auto_v
+def compute_mix_vow(slider_v: Dict[str, float], text: str, alpha: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    manual = np.array([slider_v[k] for k in VOW_KEYS], dtype=float)
+    auto = vow_vector_from_text(text)
+    mix = alpha * manual + (1.0 - alpha) * auto
+    return manual, auto, mix
 
-# ------------------------------------------------------------
-# QUBO(one-hot) choose god
-# ------------------------------------------------------------
-# Energy per god i: Ei = sum_j W(i,j) * mix_v(j)
-# one-hot penalty shown as: E(x)=sum_i Ei*x_i + P*(sum_i x_i - 1)^2
-W = df_char[weight_cols].applymap(lambda x: safe_float(x, 0.0)).to_numpy(dtype=float)
-E = (W @ mix_v.reshape(-1, 1)).reshape(-1)  # (n_char,)
 
-# one-hot exact solution (pick argmin E) but keep QUBO proof with penalty
-best_i = int(np.argmin(E))
-x = np.zeros(len(E), dtype=int)
-x[best_i] = 1
+def compute_char_energy(df: pd.DataFrame, vow_mix: np.ndarray) -> np.ndarray:
+    """
+    各神のエネルギー（小さいほど選ばれやすい）を作る。
+    ここはプロジェクト固有なので、基本は「重み×vow」の線形でOK。
+    """
+    W = df[VOW_KEYS].to_numpy(dtype=float)  # (n_char, 12)
+    # “寄与が大きいほどエネルギーが小さくなる”ようにマイナス
+    score = W @ vow_mix  # 大きいほど良い
+    E = -score
+    return E.astype(float)
 
-qubo_energy = float(np.sum(E * x) + P * (np.sum(x) - 1) ** 2)
 
-# observation distribution (temperature) using energies (lower better)
-# Use Boltzmann on -E/temperature
-prob = softmax_stable(-E, temperature=max(1e-6, float(temperature)))
-rng = np.random.default_rng(make_seed(user_text + str(time.time_ns())))
-samples = rng.choice(np.arange(len(E)), size=int(sample_n), p=prob)
-counts = np.bincount(samples, minlength=len(E))
+def softmax(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    x = x - np.max(x)
+    ex = np.exp(x)
+    return ex / np.sum(ex)
 
-# ------------------------------------------------------------
-# Result tables
-# ------------------------------------------------------------
-char_ids = df_char[char_id_col].astype(str).tolist() if char_id_col else [f"CHAR_{i+1:02d}" for i in range(len(df_char))]
-char_names = df_char[char_name_col].astype(str).tolist() if char_name_col else [f"神_{i+1}" for i in range(len(df_char))]
 
-df_rank = pd.DataFrame({
-    "順位": np.arange(1, len(E)+1),
-    "CHAR_ID": char_ids,
-    "神": char_names,
-    "energy（低いほど選ばれやすい）": E,
-    "確率（softmax）": prob
-}).sort_values("energy（低いほど選ばれやすい）", ascending=True).reset_index(drop=True)
+# 実行ボタン（左下の雰囲気に寄せる）
+st.markdown("---")
+run_col1, run_col2 = st.columns([1.0, 3.0])
+with run_col1:
+    run = st.button("🧪 観測する（QUBOから抽出）", use_container_width=True)
+with run_col2:
+    st.caption("※ Excel列名ゆれは許容。見つからないVOW列は0補完して動作します。")
 
-top3 = df_rank.head(3).copy()
+# 初回も自動で1回まわす（runを押さなくても表示）
+if "last_result" not in st.session_state:
+    st.session_state["last_result"] = {}
 
-# selected character info
-sel_char_id = str(df_rank.iloc[0]["CHAR_ID"])
-sel_name = str(df_rank.iloc[0]["神"])
+if run or not st.session_state["last_result"]:
+    rng = np.random.default_rng(make_seed(st.session_state["wish_text"] + str(time.time())[:6]))
 
-# image path (repo path)
-img_path = None
-if char_img_col and sel_char_id in df_char[char_id_col].astype(str).values:
-    row = df_char.loc[df_char[char_id_col].astype(str) == sel_char_id].iloc[0]
-    img_path = str(row.get(char_img_col, "")).strip()
+    manual_v, auto_v, mix_v = compute_mix_vow(st.session_state["vows"], st.session_state["wish_text"], float(st.session_state["mix_alpha"]))
+    E = compute_char_energy(df_char, mix_v)
 
-# ------------------------------------------------------------
-# QUOTES selection (temperature)
-# ------------------------------------------------------------
-def quote_score(quote: str, keywords: List[str]) -> float:
-    q = (quote or "").lower()
-    if not q:
-        return 0.0
-    score = 0.0
-    for k in keywords:
-        kk = (k or "").lower()
-        if kk and kk in q:
-            score += 2.0
-        # partial
-        if kk and (len(kk) >= 2):
-            score += 0.2 * sum(1 for i in range(len(kk)-1) if kk[i:i+2] in q)
-    return score
+    # QUBO one-hot
+    x_best, Ebest = solve_onehot_qubo_sa(
+        E=E,
+        P=float(st.session_state["P"]),
+        sweeps=int(st.session_state["sweeps"]),
+        temp=float(st.session_state["temp"]),
+        rng=rng
+    )
+    chosen_idx = int(np.argmax(x_best))
 
-# use extracted keywords from user text + top contributing vows
-kw_text = extract_keywords_simple(user_text, top_n=5)
-# top contributing vows from mix_v
-df_contrib = pd.DataFrame({"VOW": vow_ids, "TITLE": vow_titles, "mix(v)": mix_v})
-df_contrib["寄与"] = df_contrib["mix(v)"]
-top_vows = df_contrib.sort_values("寄与", ascending=False).head(3)
-kw = kw_text + top_vows["TITLE"].astype(str).tolist()
-kw = list(dict.fromkeys([k for k in kw if k]))
+    # 観測分布（サンプル）
+    counts = np.zeros(len(df_char), dtype=int)
+    for _ in range(int(st.session_state["samples"])):
+        xb, _ = solve_onehot_qubo_sa(E=E, P=float(st.session_state["P"]), sweeps=int(st.session_state["sweeps"]), temp=float(st.session_state["temp"]), rng=rng)
+        counts[int(np.argmax(xb))] += 1
 
-if df_quotes.empty or quote_text_col is None:
-    picked_quote = {"quote": "未来は、今の選択によって少しずつ形になる。", "source": "—"}
-    df_qcand = pd.DataFrame()
-else:
-    qdf = df_quotes.copy()
-    if quote_lang_col and quote_lang:
-        qdf = qdf[qdf[quote_lang_col].astype(str).str.lower().fillna("") == str(quote_lang).lower()].copy() if quote_lang_col in qdf.columns else qdf
+    # 上位3も出す（エネルギーの低い順）
+    order = np.argsort(E)[:3]
 
-    qdf["__quote"] = qdf[quote_text_col].astype(str).fillna("")
-    qdf["__source"] = qdf[quote_src_col].astype(str).fillna("—") if quote_src_col else "—"
-    qdf["__score"] = qdf["__quote"].apply(lambda s: quote_score(s, kw))
-
-    # Convert to energy: lower is better
-    # energy = -score + small length prior
-    qdf["__energy"] = -qdf["__score"] + 0.002 * qdf["__quote"].str.len().clip(lower=0)
-
-    qdf = qdf.sort_values("__energy", ascending=True).reset_index(drop=True)
-
-    # temperature pick
-    qE = qdf["__energy"].to_numpy(dtype=float)
-    qprob = softmax_stable(-qE, temperature=max(1e-6, float(quote_temp)))
-    pick_idx = int(rng.choice(np.arange(len(qdf)), p=qprob)) if len(qdf) > 0 else 0
-
-    picked_quote = {
-        "quote": str(qdf.iloc[pick_idx]["__quote"]) if len(qdf) else "—",
-        "source": str(qdf.iloc[pick_idx]["__source"]) if len(qdf) else "—",
+    st.session_state["last_result"] = {
+        "manual": manual_v,
+        "auto": auto_v,
+        "mix": mix_v,
+        "E": E,
+        "x": x_best,
+        "Ebest": Ebest,
+        "chosen_idx": chosen_idx,
+        "counts": counts,
+        "top3": order,
     }
 
-    df_qcand = qdf.head(12)[["__quote", "__source", "__score", "__energy"]].rename(
-        columns={"__quote":"QUOTE", "__source":"SOURCE", "__score":"score", "__energy":"energy"}
-    )
+res = st.session_state["last_result"]
+manual_v = res["manual"]
+auto_v = res["auto"]
+mix_v = res["mix"]
+E = res["E"]
+x_best = res["x"]
+chosen_idx = res["chosen_idx"]
+counts = res["counts"]
+top3 = res["top3"]
+
 
 # ------------------------------------------------------------
-# Plotly theme helper (dark)
+# 11) Step3：結果表示（表・キャラ・寄与・QUOTES）
 # ------------------------------------------------------------
-def plotly_dark_layout(fig: go.Figure, height: int = 360):
-    fig.update_layout(
+st.markdown("## Step 3：結果（観測された神＋理由＋QUOTES神託）")
+
+left2, right2 = st.columns([2.1, 1.1], gap="large")
+
+# 右上の結果表
+with right2:
+    # 結果表（上位3）
+    top_df = pd.DataFrame({
+        "順位": [1, 2, 3],
+        "CHAR_ID": df_char.loc[top3, "CHAR_ID"].values,
+        "神": df_char.loc[top3, "神"].values,
+        "energy（低いほど選ばれやすい）": E[top3],
+        "確率（softmax）": softmax(-E)[top3],  # -Eがスコア
+    })
+    st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+    chosen = df_char.iloc[chosen_idx]
+    st.markdown(f"### 🌟 今回“観測”された神：{chosen['神']}（{chosen['CHAR_ID']}）")
+
+    # キャラクター画像（assets/images/characters に置いてある前提）
+    # 例: CHAR_01.png / CHAR_01.webp / CHAR_01.jpg / CHAR_01_p1.png など複数を許容
+    img_dir = Path("assets/images/characters")
+    img = None
+    if img_dir.exists():
+        candidates = [
+            img_dir / f"{chosen['CHAR_ID']}.png",
+            img_dir / f"{chosen['CHAR_ID']}.webp",
+            img_dir / f"{chosen['CHAR_ID']}.jpg",
+            img_dir / f"{chosen['CHAR_ID']}_p1.png",
+            img_dir / f"{chosen['CHAR_ID']}_p1.webp",
+        ]
+        for cp in candidates:
+            if cp.exists():
+                img = cp
+                break
+    if img is not None:
+        st.image(str(img), use_container_width=True)
+        st.caption(f"{chosen['神']}（{img.name}）")
+    else:
+        st.caption("※キャラクター画像が見つかりません（assets/images/characters 配下を確認）")
+
+    # 緑の格言（雰囲気継承）
+    st.markdown(
+        "<div class='quote-green'>"
+        "いまの波は <b>迷いを断つ</b>・<b>行動と挑戦を加速</b>・<b>判断を急がず、機を待つ</b> に寄っている。"
+        "季節や時間（Stage）は流れを強める。"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    # 寄与した誓願（Top）
+    contrib = pd.DataFrame({
+        "VOW": VOW_KEYS,
+        "TITLE": [VOW_TITLES[k] for k in VOW_KEYS],
+        "mix(v)": mix_v,
+        "W(char,v)": df_char.loc[chosen_idx, VOW_KEYS].to_numpy(dtype=float),
+    })
+    contrib["寄与(w*v)"] = contrib["mix(v)"] * contrib["W(char,v)"]
+    contrib = contrib.sort_values("寄与(w*v)", ascending=False).head(6)
+
+    st.markdown("### 🧩 寄与した誓願（Top）")
+    st.dataframe(contrib, use_container_width=True, hide_index=True)
+
+    # QUOTES（青）—温度付きで3つ
+    quotes_list = build_quotes(df_quotes)
+    rngq = np.random.default_rng(make_seed(st.session_state["wish_text"] + "|quotes"))
+    picked = choose_quotes_with_temperature(quotes_list, temperature=float(st.session_state["quote_temp"]), k=3, rng=rngq)
+
+    st.markdown("### 🟦 QUOTES神託（温度付きで選択）")
+    for i, q in enumerate(picked, start=1):
+        st.markdown(
+            "<div class='quote-blue'>"
+            f"<b>神託{i}</b><br>"
+            f"「{q['quote']}」<br>"
+            f"— {q.get('source','—')}"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+
+# ------------------------------------------------------------
+# 12) 可視化：1) auto/manual/mix 2) energy 3) 観測分布 4) 球体アート
+# ------------------------------------------------------------
+with left2:
+    st.markdown("## 📊 可視化：テキストの影響・観測分布・エネルギー地形")
+
+    # 1) テキスト＋誓願 自動推定の影響
+    df_v = pd.DataFrame({
+        "VOW": VOW_KEYS,
+        "manual": manual_v,
+        "auto": auto_v,
+        "mix": mix_v
+    })
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=df_v["VOW"], y=df_v["auto"], mode="lines+markers", name="auto"))
+    fig1.add_trace(go.Scatter(x=df_v["VOW"], y=df_v["manual"], mode="lines+markers", name="manual"))
+    fig1.add_trace(go.Scatter(x=df_v["VOW"], y=df_v["mix"], mode="lines+markers", name="mix"))
+    fig1.update_layout(
+        title="1) テキスト＋誓願 自動推定の影響（auto vs manual vs mix）",
         paper_bgcolor="rgba(6,8,18,1)",
         plot_bgcolor="rgba(6,8,18,1)",
-        font=dict(color="rgba(245,245,255,0.90)"),
-        height=height,
-        margin=dict(l=10, r=10, t=40, b=10),
+        font=dict(color="rgba(245,245,255,0.92)"),
+        xaxis=dict(gridcolor="rgba(255,255,255,0.10)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.10)"),
+        legend=dict(bgcolor="rgba(0,0,0,0.20)")
     )
-    fig.update_xaxes(showgrid=False, color="rgba(245,245,255,0.70)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.10)", color="rgba(245,245,255,0.70)")
-    return fig
+    st.plotly_chart(fig1, use_container_width=True)
 
-# ------------------------------------------------------------
-# Right side results
-# ------------------------------------------------------------
-with right:
-    st.markdown("## Step 3 : 結果（観測された神＋理由＋QUOTES神託）")
-
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("### ランキング（上位）")
-    st.dataframe(df_dark_style(top3), use_container_width=True, hide_index=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-    # Observed god
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown(f"### 🌟 今回“観測”された神： **{sel_name}**  ({sel_char_id})")
-    st.caption("※ここは“単発の観測（1回抽選）”です。下の観測分布（サンプル）は「同条件で何回も観測したらどう出るか」のヒストグラムです。")
-
-    # show character image if exists
-    if img_path:
-        try:
-            p = Path(img_path)
-            if not p.exists():
-                # typical repo path: ./assets/images/characters/<file>
-                alt = Path("assets") / "images" / "characters" / Path(img_path).name
-                p = alt if alt.exists() else p
-            if p.exists():
-                st.image(Image.open(p), use_container_width=True)
-        except Exception:
-            pass
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Green oracle message (継承)
-    # Build reason text from top contributing vows
-    top_reason = top_vows.head(3)
-    reason_words = "・".join(top_reason["TITLE"].astype(str).tolist()) if len(top_reason) else "—"
-    green_msg = f"""
-<div class="quote-green">
-<b>神託（雰囲気：薄い緑 × 濃い緑文字）</b><br>
-いまの波は <b>{reason_words}</b> に寄っている。季節×時間（Stage）は流れを強める。<br>
-格言：<b>「{picked_quote["quote"]}」</b> — {picked_quote["source"]}
-</div>
-"""
-    st.markdown(green_msg, unsafe_allow_html=True)
-
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-    # Contrib table (Top)
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("### 🧩 寄与した誓願（Top）")
-    show_contrib = top_vows[["VOW","TITLE","mix(v)"]].copy()
-    show_contrib["W(char,v)"] = 0.0
-    show_contrib["寄与(v*w)"] = 0.0
-    # compute W for selected god
-    sel_row = df_char.iloc[best_i]
-    for idx in show_contrib.index:
-        vid = show_contrib.loc[idx,"VOW"]
-        col = None
-        for c in weight_cols:
-            if str(c).upper() == str(vid).upper():
-                col = c
-                break
-        wcv = safe_float(sel_row.get(col, 0.0), 0.0) if col else 0.0
-        show_contrib.loc[idx,"W(char,v)"] = wcv
-        show_contrib.loc[idx,"寄与(v*w)"] = float(show_contrib.loc[idx,"mix(v)"] * wcv)
-
-    st.dataframe(df_dark_style(show_contrib), use_container_width=True, hide_index=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-    # Blue quotes box (継承)
-    st.markdown("### 🗣 QUOTES神託（温度付きで選択）")
-    blue = f"""
-<div class="quote-blue">
-<b>QUOTES神託（雰囲気：濃い青 × 青文字）</b><br>
-「{picked_quote["quote"]}」<br>
-— {picked_quote["source"]}
-</div>
-"""
-    st.markdown(blue, unsafe_allow_html=True)
-
-    with st.expander("🔎 格言候補Top（デバッグ）", expanded=False):
-        if isinstance(df_qcand, pd.DataFrame) and not df_qcand.empty:
-            st.dataframe(df_dark_style(df_qcand), use_container_width=True, hide_index=True)
-        else:
-            st.caption("格言候補がありません（QUOTESシート/列名をご確認ください）。")
-
-# ------------------------------------------------------------
-# Visualization section (graphs + keyword + word-sphere art)
-# ------------------------------------------------------------
-st.markdown("## 📊 可視化：テキストの影響・観測分布・エネルギー地形")
-
-# 1) auto vs manual vs mix
-df_cmp = pd.DataFrame({
-    "VOW": vow_ids,
-    "manual": manual_v,
-    "auto": auto_v,
-    "mix": mix_v
-})
-fig1 = go.Figure()
-fig1.add_trace(go.Scatter(x=df_cmp["VOW"], y=df_cmp["auto"], mode="lines+markers", name="auto"))
-fig1.add_trace(go.Scatter(x=df_cmp["VOW"], y=df_cmp["manual"], mode="lines+markers", name="manual"))
-fig1.add_trace(go.Scatter(x=df_cmp["VOW"], y=df_cmp["mix"], mode="lines+markers", name="mix"))
-fig1.update_layout(title="1) テキスト→誓願 自動推定の影響（auto vs manual vs mix）")
-plotly_dark_layout(fig1, height=380)
-st.plotly_chart(fig1, use_container_width=True, config={"displaylogo": False})
-
-# 2) energy landscape (all candidates)
-fig2 = go.Figure()
-fig2.add_trace(go.Bar(x=char_names, y=E))
-fig2.update_layout(title="2) エネルギー地形（全候補）", xaxis_title="神", yaxis_title="energy（低いほど選ばれやすい）")
-plotly_dark_layout(fig2, height=380)
-st.plotly_chart(fig2, use_container_width=True, config={"displaylogo": False})
-
-# 3) observation distribution
-fig3 = go.Figure()
-fig3.add_trace(go.Bar(x=char_names, y=counts))
-fig3.update_layout(title="3) 観測分布（サンプル）", xaxis_title="神", yaxis_title="count")
-plotly_dark_layout(fig3, height=380)
-st.plotly_chart(fig3, use_container_width=True, config={"displaylogo": False})
-
-# 4) keywords + word sphere art
-st.markdown("### 4) テキストのキーワード抽出（簡易）")
-if not user_text.strip():
-    st.caption("（入力テキストが空です）")
-else:
-    st.caption(f"抽出キーワード：{', '.join(kw_text) if kw_text else '—'}")
-
-# 追加：球体（アート）
-st.markdown("#### 🌐 縁の球体（誓願テキスト → キーワード → エネルギー近さで単語を接続）")
-center_words = kw_text[:3] if kw_text else [t for t in top_vows["TITLE"].astype(str).tolist()[:2]]
-center_words = [w for w in center_words if w]
-
-seed = make_seed(user_text + "|sphere")
-network = build_word_network(center_words=center_words, n_total=30, jitter=0.08, seed=seed)
-center_set = set(center_words)
-pos = layout_sphere(network["words"], network["energies"], center_set=center_set, seed=seed)
-fig_sphere = plot_word_sphere(network, pos, center_set=center_set)
-
-st.plotly_chart(
-    fig_sphere,
-    use_container_width=True,
-    config={"displaylogo": False, "scrollZoom": True, "doubleClick": "reset"}
-)
-
-# ------------------------------------------------------------
-# QUBO proof
-# ------------------------------------------------------------
-with st.expander("🧠 QUBO 証拠（one-hot 制約）", expanded=False):
-    st.code(
-        "E(x)= Σ_i E_i x_i + P(Σ_i x_i - 1)^2\n"
-        f"P={P:.2f}\n"
-        f"x={x.tolist()}\n"
-        f"qubo_energy={qubo_energy:.6f}\n",
-        language="text"
+    # 2) エネルギー地形（全候補）
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(x=df_char["神"], y=E))
+    fig2.update_layout(
+        title="2) エネルギー地形（全候補）",
+        paper_bgcolor="rgba(6,8,18,1)",
+        plot_bgcolor="rgba(6,8,18,1)",
+        font=dict(color="rgba(245,245,255,0.92)"),
+        xaxis=dict(tickangle=90, gridcolor="rgba(255,255,255,0.08)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.10)"),
     )
+    st.plotly_chart(fig2, use_container_width=True)
 
+    # 3) 観測分布（サンプル）
+    fig3 = go.Figure()
+    fig3.add_trace(go.Bar(x=df_char["神"], y=counts))
+    fig3.update_layout(
+        title="3) 観測分布（サンプル）",
+        paper_bgcolor="rgba(6,8,18,1)",
+        plot_bgcolor="rgba(6,8,18,1)",
+        font=dict(color="rgba(245,245,255,0.92)"),
+        xaxis=dict(tickangle=90, gridcolor="rgba(255,255,255,0.08)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.10)"),
+    )
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # 4) テキストのキーワード抽出 → 球体アート（追加機能）
+    st.markdown("### 4) テキストのキーワード抽出（簡易）＋単語の球体（アート）")
+
+    if (st.session_state["wish_text"] or "").strip():
+        fig_sphere, kws = build_sphere_figure(
+            user_text=st.session_state["wish_text"],
+            topn_kw=5,
+            n_total=30,
+            jitter=0.10,
+            noise=0.06,
+            iters=80
+        )
+        st.caption("抽出キーワード：" + " / ".join(kws))
+        st.plotly_chart(
+            fig_sphere,
+            use_container_width=True,
+            config={
+                "displayModeBar": True,
+                "scrollZoom": True,
+                "displaylogo": False,
+                "doubleClick": "reset",
+            }
+        )
+    else:
+        st.caption("（入力テキストが空のため、球体を生成できません）")
+
+    # QUBO証拠（デバッグ）
+    with st.expander("🧠 QUBO 証拠（デバッグ）", expanded=False):
+        st.write(f"P = {float(st.session_state['P']):.2f}")
+        st.write("x =", x_best.tolist())
+        st.write("Ebest =", float(res["Ebest"]))
+        st.latex(r"E(\mathbf{x})=\sum_i E_i x_i + P\left(\sum_i x_i-1\right)^2")
+
+
+# ------------------------------------------------------------
+# 13) Excelエラー対策の説明（UI内に短く表示）
+# ------------------------------------------------------------
+with st.expander("🔧 Excel検出が不安なとき（列名のコツ）", expanded=False):
+    st.markdown(
+        "- VOW列は `VOW_01` 〜 `VOW_12` が理想ですが、`VOW01` / `VOW1` / `vow_01_weight` のような表記ゆれも自動検出します。\n"
+        "- 見つからないVOW列は **0で補完**して動くので、まずは動作優先でOKです。\n"
+        "- `CHAR_ID` と `神` 列があると安定します（無い場合も推定して作ります）。"
+    )
