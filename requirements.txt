@@ -1,5 +1,6 @@
-streamlit
-pandas
-numpy
-Pillow
-openpyxl
+streamlit>=1.32
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+pillow>=10.0
+plotly>=5.18
