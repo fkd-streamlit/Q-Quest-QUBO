@@ -1170,7 +1170,7 @@ with right_col:
         if len(qpick) > 0:
             st.dataframe(qpick[["QUOTE", "SOURCE"]], use_container_width=True, hide_index=True)
     
-    st.markdown(f"### 🌟 今回"観測"された神：{obs_god}（{obs_char}）")
+    st.markdown(f'### 🌟 今回「観測」された神：{obs_god}（{obs_char}）')
     
     st.caption("※ここは「単発の観測（1回抽選）」です。下の観測分布（サンプル）は「同条件で何回も観測したらどう出るか」のヒストグラムです。そのため、分布の最多と単発の観測結果が一致しないことがあります（正常挙動）。")
 
