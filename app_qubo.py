@@ -156,22 +156,168 @@ section[data-testid="stSidebar"] [data-baseweb="checkbox"] label {
 }
 
 /* --- file uploader (black panel fix) --- */
-div[data-testid="stFileUploader"]{
+div[data-testid="stFileUploader"],
+div[data-testid="stFileUploader"] > div,
+div[data-testid="stFileUploader"] > div > div {
   background: rgba(10,12,26,0.95) !important;
   border: 1px solid rgba(255,255,255,0.20) !important;
   border-radius: 14px !important;
   padding: 10px !important;
 }
-div[data-testid="stFileUploader"] *{
+/* すべてのテキストを白に */
+div[data-testid="stFileUploader"],
+div[data-testid="stFileUploader"] *,
+div[data-testid="stFileUploader"] * * {
   color: rgba(245,245,255,0.95) !important;
 }
-div[data-testid="stFileUploader"] button{
+/* ドラッグ&ドロップエリア */
+div[data-testid="stFileUploader"] [data-baseweb="file-uploader"],
+div[data-testid="stFileUploader"] [data-baseweb="file-uploader"] * {
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+  border-color: rgba(255,255,255,0.20) !important;
+}
+/* ファイルアップローダーの内部テキスト */
+div[data-testid="stFileUploader"] p,
+div[data-testid="stFileUploader"] span,
+div[data-testid="stFileUploader"] div,
+div[data-testid="stFileUploader"] label {
+  color: rgba(245,245,255,0.95) !important;
+  background: rgba(10,12,26,0.95) !important;
+}
+/* ボタン */
+div[data-testid="stFileUploader"] button,
+div[data-testid="stFileUploader"] [role="button"] {
   background: rgba(20,30,50,0.8) !important;
   color: rgba(245,245,255,0.95) !important;
   border: 1px solid rgba(255,255,255,0.20) !important;
 }
-div[data-testid="stFileUploader"] button:hover{
+div[data-testid="stFileUploader"] button:hover,
+div[data-testid="stFileUploader"] [role="button"]:hover {
   background: rgba(30,40,60,0.9) !important;
+}
+/* アップロード済みファイル名 */
+div[data-testid="stFileUploader"] [data-baseweb="file-uploader"] [data-baseweb="file-name"],
+div[data-testid="stFileUploader"] [data-baseweb="file-uploader"] [data-baseweb="file-size"] {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* 白い背景を黒に上書き */
+div[data-testid="stFileUploader"] [style*="background-color: rgb(255"],
+div[data-testid="stFileUploader"] [style*="background-color:rgb(255"],
+div[data-testid="stFileUploader"] [style*="background: rgb(255"],
+div[data-testid="stFileUploader"] [style*="background:rgb(255"],
+div[data-testid="stFileUploader"] [style*="#ffffff"],
+div[data-testid="stFileUploader"] [style*="#FFFFFF"] {
+  background-color: rgba(10,12,26,0.95) !important;
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+}
+/* 薄い灰色の文字を白に */
+div[data-testid="stFileUploader"] [style*="color: rgb(128"],
+div[data-testid="stFileUploader"] [style*="color:rgb(128"],
+div[data-testid="stFileUploader"] [style*="color: rgb(200"],
+div[data-testid="stFileUploader"] [style*="color:rgb(200"],
+div[data-testid="stFileUploader"] [style*="color: rgb(150"],
+div[data-testid="stFileUploader"] [style*="color:rgb(150"] {
+  color: rgba(245,245,255,0.95) !important;
+}
+
+/* --- Expander (折りたたみ可能セクション) - より強力に --- */
+div[data-testid="stExpander"],
+div[data-testid="stExpander"] > div,
+div[data-testid="stExpander"] > div > div,
+div[data-testid="stExpander"] > div > div > div {
+  background: rgba(10,12,26,0.95) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 8px !important;
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expanderのタイトル（ヘッダー） */
+div[data-testid="stExpander"] [data-baseweb="accordion"],
+div[data-testid="stExpander"] [data-baseweb="accordion"] * {
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+}
+div[data-testid="stExpander"] [data-baseweb="accordion"] button,
+div[data-testid="stExpander"] [data-baseweb="accordion"] [role="button"],
+div[data-testid="stExpander"] summary {
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+  border: none !important;
+}
+div[data-testid="stExpander"] [data-baseweb="accordion"] button *,
+div[data-testid="stExpander"] [data-baseweb="accordion"] [role="button"] *,
+div[data-testid="stExpander"] summary *,
+div[data-testid="stExpander"] [data-baseweb="accordion"] button * * {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expanderのコンテンツ */
+div[data-testid="stExpander"] [data-baseweb="accordion-panel"],
+div[data-testid="stExpander"] [data-baseweb="accordion-panel"] *,
+div[data-testid="stExpander"] [data-baseweb="accordion-panel"] * * {
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expander内のすべてのテキスト（最優先） */
+div[data-testid="stExpander"],
+div[data-testid="stExpander"] *,
+div[data-testid="stExpander"] * *,
+div[data-testid="stExpander"] * * *,
+div[data-testid="stExpander"] * * * * {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expander内のmarkdownテキスト */
+div[data-testid="stExpander"] p,
+div[data-testid="stExpander"] span,
+div[data-testid="stExpander"] div,
+div[data-testid="stExpander"] strong,
+div[data-testid="stExpander"] b,
+div[data-testid="stExpander"] h1,
+div[data-testid="stExpander"] h2,
+div[data-testid="stExpander"] h3,
+div[data-testid="stExpander"] h4,
+div[data-testid="stExpander"] h5,
+div[data-testid="stExpander"] h6 {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expander内のDataFrameも白文字に */
+div[data-testid="stExpander"] div[data-testid="stDataFrame"],
+div[data-testid="stExpander"] div[data-testid="stDataFrame"] *,
+div[data-testid="stExpander"] div[data-testid="stDataFrame"] * * {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* Expander内のst.markdownコンテンツ */
+div[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] *,
+div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] * * {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* 白い背景を黒に上書き */
+div[data-testid="stExpander"] [style*="background-color: rgb(255"],
+div[data-testid="stExpander"] [style*="background-color:rgb(255"],
+div[data-testid="stExpander"] [style*="background: rgb(255"],
+div[data-testid="stExpander"] [style*="background:rgb(255"],
+div[data-testid="stExpander"] [style*="#ffffff"],
+div[data-testid="stExpander"] [style*="#FFFFFF"] {
+  background-color: rgba(10,12,26,0.95) !important;
+  background: rgba(10,12,26,0.95) !important;
+  color: rgba(245,245,255,0.95) !important;
+}
+/* 黒い文字を白に上書き（すべてのパターン） */
+div[data-testid="stExpander"] [style*="color"],
+div[data-testid="stExpander"] [style*="color"] * {
+  color: rgba(245,245,255,0.95) !important;
+}
+/* 特定の色パターンも上書き */
+div[data-testid="stExpander"] [style*="color: rgb(0"],
+div[data-testid="stExpander"] [style*="color:rgb(0"],
+div[data-testid="stExpander"] [style*="color: rgb(38"],
+div[data-testid="stExpander"] [style*="color:rgb(38"],
+div[data-testid="stExpander"] [style*="color: rgb(49"],
+div[data-testid="stExpander"] [style*="color:rgb(49"],
+div[data-testid="stExpander"] [style*="color: rgb(19"],
+div[data-testid="stExpander"] [style*="color:rgb(19"] {
+  color: rgba(245,245,255,0.95) !important;
 }
 
 /* --- Cards --- */
@@ -1725,12 +1871,17 @@ with right_col:
     # Debug expander for quotes
     with st.expander("格言候補Top (デバッグ)", expanded=False):
         if len(qpick_temp) > 0:
-            st.markdown("**QUOTES神託（温度付き）候補:**")
-            st.dataframe(qpick_temp[["QUOTE", "SOURCE"]], use_container_width=True, hide_index=True)
+            st.markdown(
+                "<div style='color:rgba(245,245,255,0.95);'><strong>QUOTES神託（温度付き）候補:</strong></div>",
+                unsafe_allow_html=True
+            )
+            html_table_quotes = render_dataframe_as_html_table(qpick_temp[["QUOTE", "SOURCE"]])
+            st.markdown(html_table_quotes, unsafe_allow_html=True)
     
     # ランキング表（参考用、折りたたみ可能に）
     with st.expander("全キャラクターランキング（参考）", expanded=False):
-        st.dataframe(df_rank.head(10), use_container_width=True, hide_index=True)
+        html_table_rank = render_dataframe_as_html_table(df_rank.head(10))
+        st.markdown(html_table_rank, unsafe_allow_html=True)
 
 
 # ============================================================
