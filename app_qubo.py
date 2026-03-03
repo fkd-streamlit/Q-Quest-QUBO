@@ -205,22 +205,24 @@ def df_dark_style(df: pd.DataFrame):
 
 # ------------------------------------------------------------
 # Load Excel pack
-# ------------------------------------------------------------
+# -------------------------------------------------------------
 def load_pack(xlsx_bytes: bytes) -> Dict[str, pd.DataFrame]:
-    bio = pd.io.common.BytesIO(xlsx_bytes)
-    xls = pd.ExcelFile(bio, engine="openpyxl")
-    sheets = {}
-    for name in xls.sheet_names:
-        try:
-            sheets[name.upper()] = pd.read_excel(bio, sheet_name=name, engine="openpyxl")
-        except Exception:
-            pass
-    # 別名対応（保険）
+    # sheet_name=None で一括読み込み（ポインタ問題を回避）
+    book = pd.read_excel(pd.io.common.BytesIO(xlsx_bytes), sheet_name=None, engine="openpyxl")
+
+    # キーを正規化（大文字＋前後空白除去）
+    sheets = {str(k).strip().upper(): v for k, v in book.items()}
+
+    # 取り出し（別名も許容）
     def pick(*cands):
         for c in cands:
             if c in sheets:
-                return sheets[c]
+                df = sheets[c].copy()
+                # 列名を正規化（重要：空白/全角スペース/改行など）
+                df.columns = [str(col).replace("\u3000", " ").strip() for col in df.columns]
+                return df
         return pd.DataFrame()
+
     return {
         "VOW": pick("VOW"),
         "CHAR": pick("CHAR", "CHARS", "CHARA"),
@@ -835,3 +837,4 @@ with st.expander("🧠 QUBO 証拠（one-hot 制約）", expanded=False):
         f"qubo_energy={qubo_energy:.6f}\n",
         language="text"
     )
+
