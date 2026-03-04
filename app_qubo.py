@@ -1405,8 +1405,15 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🍁 季節×時間（Stage）")
     st.toggle("現在時刻から自動推定（簡易）", value=True, key="auto_stage")
-    st.caption("STAGE_ID は『季節×時間の状態』です。Excel側の STAGE_TO_VOW がある場合、誓願に“季節の流れ”を混ぜます。")
-    stage_id = st.selectbox("STAGE_ID（手動上書き可）", options=["ST_01","ST_02","ST_03","ST_04"], index=0, key="stage_id")
+    st.caption("STAGE_ID は『季節×時間の状態』です。Excel側の STAGE_TO_AXIS（優先）または STAGE_TO_VOW がある場合、誓願に「季節の流れ」を混ぜます。")
+    # STAGE_IDの選択肢を動的に生成（ST_01～ST_16）
+    stage_options = [f"ST_{i:02d}" for i in range(1, 17)]
+    current_stage_idx = 0
+    current_stage_val = st.session_state.get("stage_id", "ST_01")
+    if current_stage_val in stage_options:
+        current_stage_idx = stage_options.index(current_stage_val)
+    stage_id = st.selectbox("STAGE_ID（手動上書き可）", options=stage_options, index=current_stage_idx, key="stage_id")
+    st.slider("季節×時間の重み（0=無効 / 大きいほど影響大）", 0.0, 2.0, 1.0, 0.1, key="stage_weight")
 
     st.markdown("---")
     st.markdown("### 🎲 揺らぎ（観測のブレ）")
@@ -1456,6 +1463,8 @@ sh_char_to_vow_name, df_char_to_vow = find_sheet(sheets, ["CHAR_TO_VOW","CHAR2VO
 sh_vow_master_name, df_vow_master = find_sheet(sheets, ["VOW_MASTER","VOW","VOWS","VOW_LIST"])
 sh_char_master_name, df_char_master = find_sheet(sheets, ["CHAR_MASTER","CHAR","CHAR_LIST","CHARACTERS"])
 sh_stage_to_vow_name, df_stage_to_vow = find_sheet(sheets, ["STAGE_TO_VOW","STAGE2VOW","STAGE-VOW"])
+sh_stage_to_axis_name, df_stage_to_axis = find_sheet(sheets, ["STAGE_TO_AXIS","STAGE2AXIS","STAGE-AXIS"])
+sh_axis_dict_name, df_axis_dict = find_sheet(sheets, ["AXIS_DICT","AXISDICT","AXIS-DICT","AXIS"])
 sh_quotes_name, df_quotes = find_sheet(sheets, ["QUOTES","QUOTE","格言","格言一覧"])
 
 # fallback: minimal demo char_to_vow if missing
@@ -1502,15 +1511,64 @@ char_ids = df_chars["CHAR_ID"].astype(str).str.strip().tolist()
 dfW = dfW.set_index("CHAR_ID").reindex(char_ids).fillna(0.0).reset_index()
 
 # stage vector (optional)
+# STAGE_TO_AXISを優先的に使用、なければSTAGE_TO_VOWを使用
 stage_vec = np.zeros(len(vow_cols), dtype=float)
-if df_stage_to_vow is not None and len(df_stage_to_vow)>0:
+current_stage_id = st.session_state.get("stage_id", "ST_01")
+
+# AXIS_DICTを使って軸名とVOW_IDのマッピングを作成
+axis_to_vow_map = {}  # key: 軸名（正規化済み）, value: vow_colsのインデックス
+if df_axis_dict is not None and len(df_axis_dict) > 0:
+    axis_cols = {norm_col(c): c for c in df_axis_dict.columns}
+    axis_id_col = axis_cols.get("AXIS_ID") or axis_cols.get("AXIS") or axis_cols.get("AXIS_NAME") or axis_cols.get("NAME")
+    vow_id_col = axis_cols.get("VOW_ID") or axis_cols.get("VOW") or axis_cols.get("VOW_INDEX")
+    
+    if axis_id_col and vow_id_col:
+        for _, axis_row in df_axis_dict.iterrows():
+            axis_name = str(axis_row.get(axis_id_col, "")).strip()
+            vow_id = str(axis_row.get(vow_id_col, "")).strip()
+            if axis_name and vow_id:
+                # vow_colsの中で該当するVOW_IDのインデックスを探す
+                for idx, vc in enumerate(vow_cols):
+                    vc_norm = norm_col(vc)
+                    vow_id_norm = norm_col(vow_id)
+                    if vc_norm == vow_id_norm or (vc_norm.endswith(vow_id_norm) and vow_id_norm in vc_norm):
+                        axis_to_vow_map[norm_col(axis_name)] = idx
+                        break
+
+# STAGE_TO_AXISを優先的に処理
+if df_stage_to_axis is not None and len(df_stage_to_axis) > 0:
+    scols = {norm_col(c): c for c in df_stage_to_axis.columns}
+    sid = scols.get("STAGE_ID") or scols.get("STAGE") or scols.get("ID")
+    if sid:
+        tmp = df_stage_to_axis.copy()
+        tmp[sid] = tmp[sid].astype(str).str.strip()
+        row = tmp[tmp[sid] == current_stage_id]
+        if len(row) > 0:
+            row = row.iloc[0]
+            sv = np.zeros(len(vow_cols), dtype=float)
+            
+            # STAGE_TO_AXISのカラムからAXIS_で始まるものを探す
+            for col in df_stage_to_axis.columns:
+                col_norm = norm_col(col)
+                # AXIS_で始まるカラムを探す（例：AXIS_SE, AXIS_RYU, AXIS_MA, AXIS_MAKOTO）
+                if col_norm.startswith("AXIS_"):
+                    axis_name = col_norm.replace("AXIS_", "").strip()
+                    # AXIS_DICTから対応するVOW_IDのインデックスを取得
+                    if axis_name in axis_to_vow_map:
+                        vow_idx = axis_to_vow_map[axis_name]
+                        axis_value = float(row.get(col, 0.0) or 0.0)
+                        sv[vow_idx] = axis_value
+            
+            stage_vec = sv
+elif df_stage_to_vow is not None and len(df_stage_to_vow) > 0:
+    # STAGE_TO_AXISがない場合はSTAGE_TO_VOWを使用
     scols = {norm_col(c): c for c in df_stage_to_vow.columns}
     sid = scols.get("STAGE_ID") or scols.get("STAGE") or scols.get("ID")
     if sid:
         tmp = df_stage_to_vow.copy()
         tmp[sid] = tmp[sid].astype(str).str.strip()
-        row = tmp[tmp[sid]==st.session_state.get("stage_id","ST_01")]
-        if len(row)>0:
+        row = tmp[tmp[sid] == current_stage_id]
+        if len(row) > 0:
             row = row.iloc[0]
             sv = []
             for c in vow_cols:
@@ -1589,8 +1647,10 @@ text_vec = text_to_vow_vec(user_text, df_vows, vow_cols, st.session_state.get("n
 alpha = float(st.session_state.get("alpha",0.55))
 mix_vec = alpha*slider_vec + (1.0-alpha)*text_vec
 
-# blend stage (small)
-mix_vec2 = mix_vec + 0.25*stage_vec
+# blend stage (STAGE_TO_AXIS or STAGE_TO_VOWの影響を明確に)
+# 係数を1.0に変更して、季節×時間の影響を明確にする
+stage_weight = float(st.session_state.get("stage_weight", 1.0))
+mix_vec2 = mix_vec + stage_weight * stage_vec
 
 # ============================================================
 # Step2: 誓願ベクトル（manual/auto/mix）テーブル表示（メインカラム内）
@@ -1602,6 +1662,7 @@ with main_col:
         "TITLE": [df_vows.iloc[i]["TITLE"] if i < len(df_vows) else "" for i in range(len(vow_cols))],
         "manual(0-5)": slider_vec,
         "auto(0-5)": text_vec,
+        "stage(0-5)": stage_vec * stage_weight,
         "mix(0-5)": mix_vec2
     })
     # HTMLテーブルとして表示（白文字・黒背景で確実に）
@@ -1894,8 +1955,37 @@ with st.expander("🔧 Excel検出デバッグ（シート名・列名）", expa
         "VOW_MASTER": sh_vow_master_name,
         "CHAR_MASTER": sh_char_master_name,
         "STAGE_TO_VOW": sh_stage_to_vow_name,
+        "STAGE_TO_AXIS": sh_stage_to_axis_name,
+        "AXIS_DICT": sh_axis_dict_name,
         "QUOTES": sh_quotes_name,
     })
+    if df_axis_dict is not None and len(df_axis_dict) > 0:
+        st.write("AXIS_DICT columns:")
+        st.write(list(df_axis_dict.columns))
+        st.write("AXIS_DICT データ:")
+        st.write(df_axis_dict.to_dict('records'))
+        st.write("axis_to_vow_map（軸名→VOWインデックスのマッピング）:")
+        st.write(axis_to_vow_map)
+    if df_stage_to_axis is not None and len(df_stage_to_axis) > 0:
+        st.write("STAGE_TO_AXIS columns:")
+        st.write(list(df_stage_to_axis.columns))
+        st.write("STAGE_TO_AXIS データ（現在のSTAGE_IDに該当する行）:")
+        current_stage_id = st.session_state.get("stage_id", "ST_01")
+        scols = {norm_col(c): c for c in df_stage_to_axis.columns}
+        sid = scols.get("STAGE_ID") or scols.get("STAGE") or scols.get("ID")
+        if sid:
+            tmp = df_stage_to_axis.copy()
+            tmp[sid] = tmp[sid].astype(str).str.strip()
+            row = tmp[tmp[sid] == current_stage_id]
+            if len(row) > 0:
+                st.write(row.to_dict('records'))
+        st.write("stage_vec（現在適用されている値）:")
+        st.write(stage_vec.tolist())
+    elif df_stage_to_vow is not None and len(df_stage_to_vow) > 0:
+        st.write("STAGE_TO_VOW columns:")
+        st.write(list(df_stage_to_vow.columns))
+        st.write("stage_vec（現在適用されている値）:")
+        st.write(stage_vec.tolist())
     st.write("CHAR_TO_VOW columns:")
     st.write(list(df_char_to_vow.columns))
     if df_char_master is not None and len(df_char_master) > 0:
